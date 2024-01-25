@@ -25,19 +25,21 @@ void execute(cmdLine *pCmdLine) {
 
         // Redirect input if inputRedirect is not NULL
         if (pCmdLine->inputRedirect != NULL) {
-            if (freopen(pCmdLine->inputRedirect, "r", stdin) == NULL) {
+            FILE *inputFile = fopen(pCmdLine->inputRedirect, "r");
+            if (inputFile == NULL) {
                 perror("open inputRedirect");
                 _exit(EXIT_FAILURE);
             }
-            fclose(stdin);
+            dup2(fileno(inputFile), STDIN_FILENO);
         }
 
         if (pCmdLine->outputRedirect != NULL) {
-            if (freopen(pCmdLine->outputRedirect, "w", stdout) == NULL) {
+            FILE *outputFile = fopen(pCmdLine->outputRedirect, "w");
+            if (outputFile == NULL) {
                 perror("open outputRedirect");
                 _exit(EXIT_FAILURE);
             }
-            fclose(stdout);
+            dup2(fileno(outputFile), STDOUT_FILENO);
         }
 
         if (execvp(pCmdLine->arguments[0], pCmdLine->arguments) == -1) {
