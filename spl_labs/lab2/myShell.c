@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 #include "LineParser.h"
 
 
@@ -25,22 +26,25 @@ void execute(cmdLine *pCmdLine) {
 
         // Redirect input if inputRedirect is not NULL
         if (pCmdLine->inputRedirect != NULL) {
-            FILE *inputFile = fopen(pCmdLine->inputRedirect, "r");
-            if (inputFile == NULL) {
+            int inputFile = open(pCmdLine->inputRedirect, O_RDONLY);
+            if (inputFile == -1) {
                 perror("open inputRedirect");
                 _exit(EXIT_FAILURE);
             }
-            dup2(fileno(inputFile), STDIN_FILENO);
+            dup2(inputFile, STDIN_FILENO);
         }
 
+        // Redirect output if outputRedirect is not NULL
         if (pCmdLine->outputRedirect != NULL) {
-            FILE *outputFile = fopen(pCmdLine->outputRedirect, "w");
-            if (outputFile == NULL) {
+            int outputFile = open(pCmdLine->outputRedirect, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (outputFile == -1) {
                 perror("open outputRedirect");
                 _exit(EXIT_FAILURE);
             }
-            dup2(fileno(outputFile), STDOUT_FILENO);
+            dup2(outputFile, STDOUT_FILENO);
         }
+
+        printf("Executing command: %s\n", pCmdLine->arguments[0]);
 
         if (execvp(pCmdLine->arguments[0], pCmdLine->arguments) == -1) {
             perror("execv problem");
@@ -107,6 +111,13 @@ int main(int argc, char **argv){
 
         else{
             parsedCmd = parseCmdLines(input);
+
+            printf("Command Line: ");
+            for (int i = 0; parsedCmd->arguments[i] != NULL; i++) {
+                printf("%s ", parsedCmd->arguments[i]);
+            }
+            printf("\n");
+
             execute(parsedCmd);
             freeCmdLines(parsedCmd);
         }

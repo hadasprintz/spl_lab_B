@@ -1,1 +1,2 @@
-ls
+Executing command: cat
+echo Hello, redirection!
