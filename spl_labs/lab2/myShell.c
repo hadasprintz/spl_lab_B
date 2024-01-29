@@ -34,32 +34,11 @@ void wakeup(int pid) {
 
 // Function to terminate a process
 void nuke(int pid) {
-    if (kill(pid, SIGKILL) == -1) {
+    if (kill(pid, SIGTSTP) == -1) {
         perror("kill");
         fprintf(stderr, "Failed to terminate process %d\n", pid);
     } else {
         printf("Terminated process %d\n", pid);
-
-        // Add a small delay before checking the process status
-        sleep(1);
-
-        // Wait for the process to terminate and collect its exit status
-        int status;
-        pid_t result;
-        if ((result = waitpid(pid, &status, 0)) > 0) {
-            if (WIFEXITED(status)) {
-                printf("Process %d terminated with status %d\n", pid, WEXITSTATUS(status));
-            } else if (WIFSIGNALED(status)) {
-                printf("Process %d terminated by signal %d\n", pid, WTERMSIG(status));
-            } else {
-                printf("Process %d terminated\n", pid);
-            }
-        } else if (result == 0) {
-            printf("Process %d is now a zombie\n", pid);
-        } else {
-            perror("waitpid");
-            fprintf(stderr, "Error waiting for process %d to terminate\n", pid);
-        }
     }
 }
 
