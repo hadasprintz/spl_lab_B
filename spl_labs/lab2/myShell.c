@@ -34,12 +34,14 @@ void wakeup(int pid) {
 
 // Function to terminate a process
 void nuke(int pid) {
-    if (kill(pid, SIGTSTP) == -1) {
+    if (kill(pid, SIGINT) == -1) {
         perror("kill");
         fprintf(stderr, "Failed to terminate process %d\n", pid);
     } else {
         printf("Terminated process %d\n", pid);
     }
+
+    sleep(1);
 }
 
 
