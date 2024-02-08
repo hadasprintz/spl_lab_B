@@ -11,7 +11,9 @@ int main(int argc, char **argv){
     }
     fprintf(stderr, "parent_process>forking…\n");
     pid_t child1 = fork();
-    fprintf(stderr, "parent_process>created process with id: %d\n", child1);
+    if (child1 != 0){
+        fprintf(stderr, "parent_process>created process with id: %d\n", child1);
+    }
     if (child1 == -1) {
         perror("Error in fork");
         exit(EXIT_FAILURE);
@@ -29,7 +31,9 @@ int main(int argc, char **argv){
         fprintf(stderr, "parent_process>closing the write end of the pipe…\n");
         close(pip_file_desc[1]);
         pid_t child2 = fork();
-        fprintf(stderr, "parent_process>created process with id: %d\n", child2);
+        if (child2 != 0){
+            fprintf(stderr, "parent_process>created process with id: %d\n", child2);
+        }
         if (child2 == -1) {
             perror("Error in fork");
             exit(EXIT_FAILURE);
