@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
+void encode(char *encryption_key, FILE *file_input, FILE *file_output);
 
 int main(int argc, char **argv) {
     int debug_mode = 1;
