@@ -20,13 +20,64 @@ typedef struct process{
     struct process *next;	                  /* next process in chain */
 } process;
 
+#define HISTLEN 20
+#define MAX_CMD_LENGTH 1024
 
-void execute(cmdLine *pCmdLine);
-void wakeup(int pid);
-void nuke(int pid);
-void addProcess(process** process_list, cmdLine* cmd, pid_t pid);
-void printProcessList(process** process_list);
-void procs(process **process_list);
+typedef struct {
+    char* command;
+} HistoryEntry;
+
+HistoryEntry* history[HISTLEN];
+int newest = -1;
+int oldest = -1;
+
+void initHistory() {
+    for (int i = 0; i < HISTLEN; i++) {
+        history[i] = NULL;
+    }
+}
+
+void addHistory(char* cmd) {
+    if (newest == -1) {
+        oldest = 0;
+    }
+    newest = (newest + 1) % HISTLEN;
+    if (history[newest] != NULL) {
+        free(history[newest]->command);
+        free(history[newest]);
+    }
+    history[newest] = (HistoryEntry*)malloc(sizeof(HistoryEntry));
+    history[newest]->command = strdup(cmd);
+    if (oldest == newest) {
+        oldest = (oldest + 1) % HISTLEN;
+    }
+}
+
+void printHistory() {
+    printf("History:\n");
+    int index = oldest;
+    int count = 1;
+    while (index != -1 && index != newest) {
+        printf("%d: %s\n", count, history[index]->command);
+        index = (index + 1) % HISTLEN;
+        count++;
+    }
+}
+
+char* getLastCommand() {
+    if (newest == -1) {
+        return NULL;
+    }
+    return history[newest]->command;
+}
+
+char* getCommandByIndex(int index) {
+    if (index < 1 || index > HISTLEN || index > newest - oldest + 1) {
+        return NULL;
+    }
+    int histIndex = (oldest + index - 2) % HISTLEN;
+    return history[histIndex]->command;
+}
 
 int debug = 0;
 
@@ -68,6 +119,57 @@ void printProcessList(process** process_list){
     }
 }
 
+void freeProcessList(process* process_list) {
+    process* current = process_list;
+    while (current != NULL) {
+        process* temp = current;
+        current = current->next;
+        freeCmdLines(temp->cmd);
+        free(temp);
+    }
+}
+
+void updateProcessList(process** process_list) {
+    process* current = *process_list;
+    while (current != NULL) {
+        int status;
+        pid_t result = waitpid(current->pid, &status, WNOHANG | WUNTRACED | WCONTINUED);
+        if (result == -1) {
+            if (errno == ECHILD) {
+                // No child processes
+                break;
+            } else {
+                perror("waitpid");
+                exit(EXIT_FAILURE);
+            }
+        } else if (result == 0) {
+            // Process is still running
+        } else {
+            // Process has terminated or stopped
+            if (WIFEXITED(status)) {
+                current->status = TERMINATED;
+            } else if (WIFSTOPPED(status)) {
+                current->status = SUSPENDED;
+            } else if (WIFCONTINUED(status)) {
+                current->status = RUNNING;
+            }
+        }
+        current = current->next;
+    }
+}
+
+void updateProcessStatus(process* process_list, int pid, int status) {
+    process* current = process_list;
+    while (current != NULL) {
+        if (current->pid == pid) {
+            current->status = status;
+            return;
+        }
+        current = current->next;
+    }
+    fprintf(stderr, "Process with PID %d not found in the process list\n", pid);
+}
+
 // Function to wake up a process
 void wakeup(int pid) {
     // Check if the process is still alive
@@ -98,36 +200,42 @@ void nuke(int pid) {
 }
 
 void procs(process **process_list) {
-    process* current = *process_list;
-    while (current != NULL) {
-        int status;
-        pid_t result = waitpid(current->pid, &status, WNOHANG | WUNTRACED | WCONTINUED);
-        if (result == -1) {
-            if (errno == ECHILD) {
-                // No child processes
-                break;
-            } else {
-                perror("waitpid");
-                exit(EXIT_FAILURE);
-            }
-        } else if (result == 0) {
-            // Process is still running
-        } else {
-            // Process has terminated or stopped
-            if (WIFEXITED(status)) {
-                current->status = TERMINATED;
-            } else if (WIFSTOPPED(status)) {
-                current->status = SUSPENDED;
-            } else if (WIFCONTINUED(status)) {
-                current->status = RUNNING;
-            }
-        }
-        current = current->next;
+    updateProcessList(process_list);
+    printProcessList(process_list);
+}
+
+void suspendProcess(process **process_list, int pid) {
+    if (kill(pid, SIGTSTP) == -1) {
+        perror("kill");
+        fprintf(stderr, "Failed to suspend process %d\n", pid);
+    } else {
+        printf("Suspended process %d\n", pid);
+        updateProcessStatus(*process_list, pid, SUSPENDED);
+    }
+}
+
+void nukeProcess(process **process_list, int pid) {
+    if (kill(pid, SIGINT) == -1) {
+        perror("kill");
+        fprintf(stderr, "Failed to terminate process %d\n", pid);
+    } else {
+        printf("Terminated process %d\n", pid);
+        updateProcessStatus(*process_list, pid, TERMINATED);
+    }
+}
+
+void wakeupProcess(process **process_list, int pid) {
+    if (kill(pid, SIGCONT) == -1) {
+        perror("kill");
+        fprintf(stderr, "Failed to wake up process %d\n", pid);
+    } else {
+        printf("Woke up process %d\n", pid);
+        updateProcessStatus(*process_list, pid, RUNNING);
     }
 }
 
 
-void execute(cmdLine *pCmdLine) {
+void execute(cmdLine *pCmdLine, process** process_list) {
     if (pCmdLine->next) {
         int pipe_fd[2];
         if (pipe(pipe_fd) == -1) {
@@ -249,7 +357,8 @@ void execute(cmdLine *pCmdLine) {
 
 
 int main(int argc, char **argv){
-    char input[2048];
+    char input[MAX_CMD_LENGTH];
+    initHistory();
     cmdLine *parsedCmd;
     process* process_list = NULL;
     for (int i=1; i< argc; i++){
@@ -289,14 +398,17 @@ int main(int argc, char **argv){
         else if (strncmp(input, "wakeup", 6) == 0) {
             // Parse the process id to wake up
             int pid = atoi(input + 7);
-            wakeup(pid);
+            wakeupProcess(&process_list, pid);
         } else if (strncmp(input, "nuke", 4) == 0) {
             // Parse the process id to terminate
             int pid = atoi(input + 5);
-            nuke(pid);
+            nukeProcess(&process_list, pid);
+        } else if (strncmp(input, "suspend", 7) == 0) {
+            // Parse the process id to suspend
+            int pid = atoi(input + 8);
+            suspendProcess(&process_list, pid);
         } else if (strcmp(input, "procs") == 0){
             procs(&process_list);
-            printProcessList(&process_list);
         }
 
         else{
@@ -319,7 +431,7 @@ int main(int argc, char **argv){
                 exit(EXIT_FAILURE);
             } else if (pid == 0){
                 //child process
-                execute(parsedCmd);
+                execute(parsedCmd, &process_list);
                 freeCmdLines(parsedCmd);
                 exit(EXIT_SUCCESS);
             }
