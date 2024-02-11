@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <errno.h>
 #include "LineParser.h"
 
 #define TERMINATED  -1
@@ -25,6 +26,7 @@ void wakeup(int pid);
 void nuke(int pid);
 void addProcess(process** process_list, cmdLine* cmd, pid_t pid);
 void printProcessList(process** process_list);
+void procs(process **process_list);
 
 int debug = 0;
 
@@ -42,26 +44,27 @@ void addProcess(process** process_list, cmdLine* cmd, pid_t pid){
 }
 
 void printProcessList(process** process_list){
-    printf("PID\tCommand\t\tSTATUS\n");
+    printf("Index\tPID\tSTATUS\tCommand\n");
     process* this_process = *process_list;
+    int index = 0;
     while (this_process != NULL){
-        printf("%d\t%s", this_process->pid, this_process->cmd->arguments[0]);
+        printf("%d\t%d\t", index, this_process->pid);
+        if (this_process->status == TERMINATED){
+            printf("Terminated\t");
+        }
+        else if (this_process->status == RUNNING){
+            printf("Running\t\t");
+        }
+        else if (this_process->status == SUSPENDED){
+            printf("Suspended\t");
+        }
+        printf("%s", this_process->cmd->arguments[0]);
         for (int i = 1; this_process->cmd->arguments[i] != NULL; i++){
             printf(" %s", this_process->cmd->arguments[i]);
         }
-        if (this_process->status == TERMINATED){
-            printf("\tTerminated\n");
-            break;
-        }
-        else if (this_process->status == RUNNING){
-            printf("\tRunning\n");
-            break;
-        }
-        else if (this_process->status == SUSPENDED){
-            printf("\tSuspended\n");
-            break;
-        }
+        printf("\n");
         this_process = this_process->next;
+        index++;
     }
 }
 
@@ -92,6 +95,35 @@ void nuke(int pid) {
     }
 
     sleep(1);
+}
+
+void procs(process **process_list) {
+    process* current = *process_list;
+    while (current != NULL) {
+        int status;
+        pid_t result = waitpid(current->pid, &status, WNOHANG | WUNTRACED | WCONTINUED);
+        if (result == -1) {
+            if (errno == ECHILD) {
+                // No child processes
+                break;
+            } else {
+                perror("waitpid");
+                exit(EXIT_FAILURE);
+            }
+        } else if (result == 0) {
+            // Process is still running
+        } else {
+            // Process has terminated or stopped
+            if (WIFEXITED(status)) {
+                current->status = TERMINATED;
+            } else if (WIFSTOPPED(status)) {
+                current->status = SUSPENDED;
+            } else if (WIFCONTINUED(status)) {
+                current->status = RUNNING;
+            }
+        }
+        current = current->next;
+    }
 }
 
 
@@ -263,6 +295,7 @@ int main(int argc, char **argv){
             int pid = atoi(input + 5);
             nuke(pid);
         } else if (strcmp(input, "procs") == 0){
+            procs(&process_list);
             printProcessList(&process_list);
         }
 
