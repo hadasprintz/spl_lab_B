@@ -515,6 +515,12 @@ int main(int argc, char **argv){
         freeCmdLines(temp->cmd);
         free(temp);
     }
+    for (int i=0; i< HISTLEN; i++){
+        if (history[i] != NULL) {
+            free(history[i]->command);
+            free(history[i]);
+        }
+    }
 
     return 0;
 }
