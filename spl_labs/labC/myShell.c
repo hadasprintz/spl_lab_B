@@ -53,13 +53,15 @@ void addHistory(char* cmd) {
     }
 }
 
-void printHistory() {
+void printHistory(int num_commands) {
     printf("History:\n");
-    int index = oldest;
+    int index = newest;
     int count = 1;
-    while (index != -1 && index != newest) {
-        printf("%d: %s\n", count, history[index]->command);
-        index = (index + 1) % HISTLEN;
+    while (count <= num_commands && count <= HISTLEN) {
+        if (history[index] != NULL) {
+            printf("%d: %s\n", count, history[index]->command);
+        }
+        index = (index - 1 + HISTLEN) % HISTLEN;
         count++;
     }
 }
@@ -68,14 +70,26 @@ char* getLastCommand() {
     if (newest == -1) {
         return NULL;
     }
-    return history[newest]->command;
+    int index = newest;
+    while (index != oldest) {
+        if (history[index] != NULL && strncmp(history[index]->command, "history", 7) != 0) {
+            return history[index]->command;
+        }
+        index = (index - 1 + HISTLEN) % HISTLEN;
+    }
+    return NULL;
 }
 
 char* getCommandByIndex(int index) {
-    if (index < 1 || index > HISTLEN || index > newest - oldest + 1) {
+    printf("Requested index: %d\n", index);
+    printf("Newest: %d, Oldest: %d\n", newest, oldest);
+    if (index < 1 || index > HISTLEN || index > oldest) {
         return NULL;
     }
-    int histIndex = (oldest + index - 2) % HISTLEN;
+    int histIndex = (newest - index + 1) % HISTLEN;
+    if (histIndex < 0) {
+        histIndex += HISTLEN;
+    }
     return history[histIndex]->command;
 }
 
@@ -240,6 +254,7 @@ void execute(cmdLine *pCmdLine, process** process_list) {
         int pipe_fd[2];
         if (pipe(pipe_fd) == -1) {
             perror("pipe problem");
+            freeCmdLines(pCmdLine);
             exit(EXIT_FAILURE);
         }
 
@@ -263,6 +278,7 @@ void execute(cmdLine *pCmdLine, process** process_list) {
                     fprintf(stderr, "PID: %d\n", pid_1);
                     fprintf(stderr, "Executing command: %s\n", pCmdLine->arguments[0]);
                 }
+                freeCmdLines(pCmdLine);
                 exit(EXIT_FAILURE);
             }
 
@@ -291,6 +307,7 @@ void execute(cmdLine *pCmdLine, process** process_list) {
                         fprintf(stderr, "PID: %d\n", pid_2);
                         fprintf(stderr, "Executing command: %s\n", pCmdLine->arguments[0]);
                     }
+                    freeCmdLines(pCmdLine);
                     exit(EXIT_FAILURE);
                 }
             } else {
@@ -309,6 +326,7 @@ void execute(cmdLine *pCmdLine, process** process_list) {
                 fprintf(stderr, "PID: %d\n", pid);
                 fprintf(stderr, "Executing command: %s\n", pCmdLine->arguments[0]);
             }
+            freeCmdLines(pCmdLine);
             exit(EXIT_FAILURE);
         } else if (pid ==0) {
             // Redirect input if needed
@@ -316,6 +334,7 @@ void execute(cmdLine *pCmdLine, process** process_list) {
                 int inputFd;
                 if ((inputFd = open(pCmdLine->inputRedirect, O_RDONLY)) == -1) {
                     printf("Input file open error\n");
+                    freeCmdLines(pCmdLine);
                     _exit(1);
                 } else {
                     dup2(inputFd, 0);
@@ -328,6 +347,7 @@ void execute(cmdLine *pCmdLine, process** process_list) {
                 int outputFd;
                 if ((outputFd = open(pCmdLine->outputRedirect, O_WRONLY | O_CREAT | O_TRUNC, 0666)) == -1) {
                     printf("Output file open error\n");
+                    freeCmdLines(pCmdLine);
                     _exit(1);
                 } else {
                     dup2(outputFd, 1);  // Redirect standard output to the outputFile
@@ -340,8 +360,11 @@ void execute(cmdLine *pCmdLine, process** process_list) {
                     fprintf(stderr, "PID: %d\n", pid);
                     fprintf(stderr, "Executing command: %s\n", pCmdLine->arguments[0]);
                 }
+                freeCmdLines(pCmdLine);
                 exit(EXIT_FAILURE);
             }
+
+            freeCmdLines(pCmdLine);
 
         }
         else {
@@ -349,6 +372,7 @@ void execute(cmdLine *pCmdLine, process** process_list) {
             int status;
             if (waitpid(pid, &status, 0) == -1) {
                 perror("waitpid");
+                freeCmdLines(pCmdLine);
                 exit(EXIT_FAILURE);
             }
         }
@@ -374,7 +398,7 @@ int main(int argc, char **argv){
             perror("getcwd");
             exit(EXIT_FAILURE);
         }
-        if (fgets(input, 2048, stdin) == NULL) {
+        if (fgets(input, sizeof(input) , stdin) == NULL) {
             perror("fgets");
             exit(EXIT_FAILURE);
         }
@@ -383,6 +407,48 @@ int main(int argc, char **argv){
         if (len > 0 && input[len - 1] == '\n') {
             input[len - 1] = '\0';
         }
+
+        if (strncmp(input, "history", 7) == 0) {
+            // Parse the number of commands to display
+            int num_commands = 10; // Default number of commands
+            if (strlen(input) > 7 && input[7] == ' ') {
+                num_commands = atoi(input + 8);
+            }
+            addHistory(input);
+            printHistory(num_commands);
+            continue;
+        }
+
+        if (strcmp(input, "!!") == 0) {
+            char* lastCommand = getLastCommand();
+            if (lastCommand != NULL) {
+                printf("Executing: %s\n", lastCommand);
+                if (strncmp(lastCommand, "history", 7) == 0) {
+                    printHistory(atoi(lastCommand + 8));
+                } else {
+                    strcpy(input, lastCommand);
+                    addHistory(input); // Re-add last command to history
+                }
+            } else {
+                printf("No previous command available.\n");
+                continue;
+            }
+        }
+
+        if (input[0] == '!') {
+            int index = atoi(&input[1]);
+            char* cmd = getCommandByIndex(index);
+            if (cmd != NULL) {
+                printf("Executing: %s\n", cmd);
+                addHistory(cmd); // Re-add command to history
+                strcpy(input, cmd);
+            } else {
+                printf("Invalid history index.\n");
+                continue;
+            }
+        }
+
+        addHistory(input);
 
         if (strcmp(input, "quit") == 0) {
             printf("Exiting the shell.\n");
