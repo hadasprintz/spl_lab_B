@@ -14,7 +14,6 @@ section .text
     global system_call
     global main
     extern strlen
-    extern encode
 
 _start:
     pop    dword ecx    ; ecx = argc
@@ -65,7 +64,7 @@ next_argument:
     ; Print argv[i]
     add edi, 4          ; skip argv[0]
     mov ecx, [edi]   ; Push argv[i]
-    push ecx            ;push string to stack
+    push ecx
     call strlen        ; Get length of string
     mov edx, eax       ; Move string length to edx
     mov eax, SYS_WRITE ; Write syscall number
@@ -85,12 +84,13 @@ next_argument:
     mov ecx, newline
     mov edx, 1
     int 0x80
+    jmp next
 
 
 next:
     dec esi
     cmp esi, 1
-    je no_arguments
+    je end_encode
     jmp next_argument
 
 no_arguments:
@@ -142,40 +142,27 @@ end_encode:
 
 open_input:
     add ecx, 2                    ; Move to filename (skip "-i")
-    push ebx
-    push ecx
-    push edx
-    mov ebx, eax
+    mov ebx, ecx
     mov eax, 0x5
     mov ecx, 0
-    mov edx, 0o100
     int 0x80
+    cmp eax, -1
+    je input_file_error
     mov dword[Infile], eax
-    mov eax, 0x21
-    mov ecx, 0
-    int 0x80
-    pop edx
-    pop ecx
-    pop ebx
+
+    jmp next
 
 
 open_output:
     add eax, 2                    ; Move to filename
-    push ebx
-    push ecx
-    push edx
     mov ebx, eax
     mov eax, 0x5
-    mov ecx, 0x42
-    mov edx, 0o666
+    mov ecx, 0x241
+    mov edx, 0x1B6
     int 0x80
+    cmp eax, -1
+    je output_file_error
     mov dword[Outfile], eax
-    mov eax, 0x21
-    mov ecx, 1
-    int 0x80
-    pop edx
-    pop ecx
-    pop ebx
 
     jmp next
 
@@ -188,6 +175,17 @@ input_file_error:
     mov eax, SYS_WRITE
     mov ebx, STDOUT
     pop ecx
+    int 0x80
+    ; Print newline
+    mov eax, SYS_WRITE
+    mov ebx, STDOUT
+    mov ecx, newline
+    mov edx, 1
+    int 0x80
+    mov eax, SYS_WRITE
+    mov ebx, STDOUT
+    mov ecx, newline
+    mov edx, 1
     int 0x80
 
     jmp next                   ; Jump to encode after error handling
@@ -202,6 +200,19 @@ output_file_error:
     mov ebx, STDOUT
     pop ecx
     int 0x80
+    ; Print newline
+    mov eax, SYS_WRITE
+    mov ebx, STDOUT
+    mov ecx, newline
+    mov edx, 1
+    int 0x80
+    mov eax, SYS_WRITE
+    mov ebx, STDOUT
+    mov ecx, newline
+    mov edx, 1
+    int 0x80
+
+
 
     jmp next                    ; Jump to encode after error handling
 
