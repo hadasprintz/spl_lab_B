@@ -71,12 +71,7 @@ next_argument:
     mov ebx, STDOUT    ; Output file descriptor
     pop ecx             ; load string to ecx
 
-    cmp word[ecx], "-i"
-    je open_input
-    cmp word[ecx], "-o"
-    je open_output
-
-    int 0x80           ; Call kernel
+    int 0x80
 
     ; Print newline
     mov eax, SYS_WRITE
@@ -84,13 +79,22 @@ next_argument:
     mov ecx, newline
     mov edx, 1
     int 0x80
+
+
+    mov ecx, [edi]   ; Push argv[i]
+
+    cmp word[ecx], "-i"
+    je open_input
+    cmp word[ecx], "-o"
+    je open_output
+
     jmp next
 
 
 next:
     dec esi
     cmp esi, 1
-    je end_encode
+    je encode
     jmp next_argument
 
 no_arguments:
@@ -154,8 +158,8 @@ open_input:
 
 
 open_output:
-    add eax, 2                    ; Move to filename
-    mov ebx, eax
+    add ecx, 2                    ; Move to filename
+    mov ebx, ecx
     mov eax, 0x5
     mov ecx, 0x241
     mov edx, 0x1B6
