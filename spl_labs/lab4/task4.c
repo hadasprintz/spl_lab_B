@@ -16,6 +16,6 @@ int main(int argc, char *argv[]) {
         printf("Usage: %s <string>\n", argv[0]);
         return 1;
     }
-    printf("The number of digits in the string is: %d\n", digit_cnt(argv[1]));
+    fprintf(stdout, "The number of digits in the string is: %d\n", digit_cnt(argv[1]));
     return 0;
 }

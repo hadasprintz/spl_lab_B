@@ -189,28 +189,7 @@ void memory_modify(state *s){
         return;
     }
 
-    // Convert val to the appropriate size based on unit_size
-    if (s->unit_size == 1) {
-        unsigned char value = val;
-        memcpy(s->mem_buf + location, &value, 1);
-    } else if (s->unit_size == 2) {
-        unsigned short value = val;
-        memcpy(s->mem_buf + location * 2, &value, 2);
-    } else if (s->unit_size == 4) {
-        unsigned int value = val;
-        memcpy(s->mem_buf + location * 4, &value, 4);
-    }
-
-    // Write the modified memory back to the file
-    FILE *file = fopen(s->file_name, "rb+");
-    if (file == NULL) {
-        fprintf(stderr, "Error: Unable to open file for writing.\n");
-        return;
-    }
-
-    fseek(file, location * s->unit_size, SEEK_SET);
-    fwrite(s->mem_buf + location * s->unit_size, s->unit_size, 1, file);
-    fclose(file);
+    memcpy(&s->mem_buf[location],&val,s->unit_size);
 
     printf("Modified memory at location %#zx\n", location);
 }
@@ -218,6 +197,7 @@ void memory_modify(state *s){
 
 int main() {
     state s = {0}; // Initialize all members to 0
+    s.unit_size = 1;
 
     void (*menu[MENU_SIZE])(state *s) = {
             toggle_debug_mode,
