@@ -8,6 +8,7 @@
 
 #define MENU_SIZE 7
 #define BUFFER_SIZE 128
+#define MAX_SECTIONS 100
 
 typedef struct {
     char debug_mode;
@@ -18,6 +19,9 @@ typedef struct {
     char display_mode;
     int mapped_fds[2]; // Array to hold file descriptors for up to two ELF files
     void *mapped_files[2]; // Array to hold mapped memory locations for up to two ELF files
+    Elf32_Ehdr *header; // Store ELF header
+    Elf32_Shdr *section_headers[MAX_SECTIONS]; // Store section headers
+    int num_sections; // Number of sections
 } state;
 
 void toggle_debug_mode(state *s) {
@@ -70,10 +74,10 @@ void examine_ELF_file(state *s){
         return;
     }
 
-    Elf32_Ehdr *header = (Elf32_Ehdr *)mapped_file;
+    s->header = (Elf32_Ehdr *)mapped_file;
 
     // Verify ELF file
-    if (memcmp(header->e_ident, ELFMAG, SELFMAG) != 0) {
+    if (memcmp(s->header->e_ident, ELFMAG, SELFMAG) != 0) {
         printf("Error: Not an ELF file\n");
         munmap(mapped_file, file_size);
         close(fd);
@@ -84,36 +88,103 @@ void examine_ELF_file(state *s){
     s->mapped_fds[index] = fd;
     s->mapped_files[index] = mapped_file;
 
+    // Store section header information
+    Elf32_Shdr *section_header_start = (Elf32_Shdr *)((uintptr_t)mapped_file + s->header->e_shoff);
+    s->num_sections = s->header->e_shnum;
+    for (int i = 0; i < s->num_sections; i++) {
+        s->section_headers[i] = &section_header_start[i];
+    }
+
+    strcpy(s->file_name, file_name); // Update file name in state structure
+
+    if (s->debug_mode) {
+        printf("shstrndx: %d\n", s->header->e_shstrndx);
+        printf("Section name offset: 0x%08x\n", s->section_headers[s->header->e_shstrndx]->sh_offset);
+    }
+
     // Print magic number bytes
-    printf("Magic number bytes 1-3 (ASCII): %c%c%c\n", header->e_ident[EI_MAG1], header->e_ident[EI_MAG2], header->e_ident[EI_MAG3]);
+    printf("Magic number bytes 1-3 (ASCII): %c%c%c\n", s->header->e_ident[EI_MAG1], s->header->e_ident[EI_MAG2], s->header->e_ident[EI_MAG3]);
 
     // Print data encoding scheme
-    printf("Data encoding scheme: %s\n", header->e_ident[EI_DATA] == ELFDATA2MSB ? "Big Endian" : "Little Endian");
+    printf("Data encoding scheme: %s\n", s->header->e_ident[EI_DATA] == ELFDATA2MSB ? "Big Endian" : "Little Endian");
 
     // Print entry point
-    printf("Entry point: 0x%x\n", header->e_entry);
+    printf("Entry point: 0x%x\n", s->header->e_entry);
 
     // Print section header table offset, number of entries, and size of each entry
-    printf("Section header table offset: 0x%x\n", header->e_shoff);
-    printf("Number of section header entries: %d\n", header->e_shnum);
-    printf("Size of each section header entry: %d\n", header->e_shentsize);
+    printf("Section header table offset: 0x%x\n", s->header->e_shoff);
+    printf("Number of section header entries: %d\n", s->num_sections);
+    printf("Size of each section header entry: %d\n", s->header->e_shentsize);
 
     // Print program header table offset, number of entries, and size of each entry
-    printf("Program header table offset: 0x%x\n", header->e_phoff);
-    printf("Number of program header entries: %d\n", header->e_phnum);
-    printf("Size of each program header entry: %d\n", header->e_phentsize);
-
-    // Unmap the file from memory
-    munmap(mapped_file, file_size);
-    close(fd);
+    printf("Program header table offset: 0x%x\n", s->header->e_phoff);
+    printf("Number of program header entries: %d\n", s->header->e_phnum);
+    printf("Size of each program header entry: %d\n", s->header->e_phentsize);
 }
 
 void print_section_names(state *s){
-    printf("Not implemented yet.\n");
+    if (s->header == NULL) {
+        printf("No ELF file mapped. Please use 'Examine ELF File' option first.\n");
+        return;
+    }
+
+    printf("Section Names:\n");
+    printf("File ELF- %s\n", s->file_name);
+    for (int i = 0; i < s->num_sections; i++) {
+        Elf32_Shdr *section = s->section_headers[i];
+        if(s->debug_mode){
+            if (section->sh_type == SHT_SYMTAB || section->sh_type == SHT_DYNSYM) {
+                int num_symbols = section->sh_size / sizeof(Elf32_Sym);
+                printf("    Symbol Table: Size = %d bytes, Number of Symbols = %d\n", section->sh_size, num_symbols);
+            }
+        }
+        printf("[%d] %s 0x%08x 0x%08x 0x%08x 0x%08x\n", i, (char *)((uintptr_t)s->mapped_files[0] + s->section_headers[s->header->e_shstrndx]->sh_offset + section->sh_name), section->sh_addr, section->sh_offset, section->sh_size, section->sh_type);
+    }
 }
 
 void print_symbols(state *s){
-    printf("Not implemented yet.\n");
+    printf("Symbols:\n");
+    for (int i = 0; i < 2; i++) {
+        if (s->mapped_fds[i] != -1) {
+            printf("File %s\n", s->file_name);
+
+            Elf32_Shdr *section_header_start = (Elf32_Shdr *)((uintptr_t)s->mapped_files[i] + s->header->e_shoff);
+            char *section_name_table = (char *)((uintptr_t)s->mapped_files[i] + section_header_start[s->header->e_shstrndx].sh_offset);
+
+            // Iterate through the section headers to find symbol table sections
+            for (int j = 0; j < s->num_sections; j++) {
+                Elf32_Shdr *section_header = &section_header_start[j];
+                if (section_header->sh_type == SHT_SYMTAB || section_header->sh_type == SHT_DYNSYM) {
+                    // Calculate the number of symbols (entries)
+                    int num_symbols = section_header->sh_size / sizeof(Elf32_Sym);
+                    printf("Symbol Table: Size = %d bytes, Number of Symbols = %d\n", section_header->sh_size, num_symbols);
+
+                    // Print additional debug information if in debug mode
+                    if (s->debug_mode) {
+                        printf("Symbol Table Index: %d\n", j);
+                        printf("Section Name: %s\n", section_name_table + section_header->sh_name);
+                    }
+
+                    // Get the symbol table pointer
+                    Elf32_Sym *symbol_table = (Elf32_Sym *)((uintptr_t)s->mapped_files[i] + section_header->sh_offset);
+
+                    // Get the string table pointer
+                    Elf32_Shdr *strtab_section_header = &section_header_start[section_header->sh_link];
+                    char *str_table = (char *)((uintptr_t)s->mapped_files[i] + strtab_section_header->sh_offset);
+
+                    // Iterate through the symbols and print their information
+                    for (int k = 0; k < num_symbols; k++) {
+                        Elf32_Sym *symbol = &symbol_table[k];
+                        char *section_name = "Undefined";
+                        if (symbol->st_shndx != SHN_UNDEF && symbol->st_shndx < s->num_sections) {
+                            section_name = section_name_table + section_header_start[symbol->st_shndx].sh_name;
+                        }
+                        printf("[%d] %08x %d %s %s\n", k, symbol->st_value, symbol->st_shndx, section_name, str_table + symbol->st_name);
+                    }
+                }
+            }
+        }
+    }
 }
 
 void check_files_for_merge(state *s){
@@ -149,6 +220,7 @@ int main() {
 
     s.mapped_files[0] = NULL; // Initialize mapped memory locations to NULL
     s.mapped_files[1] = NULL;
+    s.header = NULL;
 
 
     void (*menu[MENU_SIZE])(state *s) = {
