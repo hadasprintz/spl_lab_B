@@ -192,7 +192,87 @@ void check_files_for_merge(state *s){
 }
 
 void merge_ELF_files(state *s){
-    printf("Not implemented yet.\n");
+    // Check if two ELF files are opened
+    if (s->mapped_fds[0] == -1 || s->mapped_fds[1] == -1) {
+        printf("Error: Two ELF files must be opened to perform merging\n");
+        return;
+    }
+
+    // Open output file for writing
+    int out_fd = open("output.ro", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (out_fd == -1) {
+        perror("Error opening output file");
+        return;
+    }
+
+    // Initialize ELF header structures for both files
+    Elf32_Ehdr *header1 = (Elf32_Ehdr *)s->mapped_files[0];
+    Elf32_Ehdr *header2 = (Elf32_Ehdr *)s->mapped_files[1];
+
+    // Copy header from the first ELF file to the output file
+    if (write(out_fd, header1, sizeof(Elf32_Ehdr)) == -1) {
+        perror("Error writing ELF header");
+        close(out_fd);
+        return;
+    }
+
+    // Merge section headers
+    Elf32_Shdr *section_headers1 = (Elf32_Shdr *)(s->mapped_files[0] + header1->e_shoff);
+    Elf32_Shdr *section_headers2 = (Elf32_Shdr *)(s->mapped_files[1] + header2->e_shoff);
+
+    size_t num_sections1 = header1->e_shnum;
+    size_t num_sections2 = header2->e_shnum;
+
+    // Calculate size of section headers for each file
+    size_t section_headers_size1 = num_sections1 * sizeof(Elf32_Shdr);
+    size_t section_headers_size2 = num_sections2 * sizeof(Elf32_Shdr);
+
+    // Write section headers from the first ELF file to the output file
+    if (write(out_fd, section_headers1, section_headers_size1) == -1) {
+        perror("Error writing section headers from file 1");
+        close(out_fd);
+        return;
+    }
+
+    // Write section headers from the second ELF file to the output file
+    if (write(out_fd, section_headers2, section_headers_size2) == -1) {
+        perror("Error writing section headers from file 2");
+        close(out_fd);
+        return;
+    }
+
+    // Merge section contents (skipping symbol table sections)
+    for (size_t i = 0; i < num_sections1; i++) {
+        // Skip symbol table sections
+        if (section_headers1[i].sh_type == SHT_SYMTAB || section_headers1[i].sh_type == SHT_DYNSYM)
+            continue;
+
+        // Write section contents from the first ELF file to the output file
+        if (write(out_fd, s->mapped_files[0] + section_headers1[i].sh_offset, section_headers1[i].sh_size) == -1) {
+            perror("Error writing section contents from file 1");
+            close(out_fd);
+            return;
+        }
+    }
+
+    for (size_t i = 0; i < num_sections2; i++) {
+        // Skip symbol table sections
+        if (section_headers2[i].sh_type == SHT_SYMTAB || section_headers2[i].sh_type == SHT_DYNSYM)
+            continue;
+
+        // Write section contents from the second ELF file to the output file
+        if (write(out_fd, s->mapped_files[1] + section_headers2[i].sh_offset, section_headers2[i].sh_size) == -1) {
+            perror("Error writing section contents from file 2");
+            close(out_fd);
+            return;
+        }
+    }
+
+    // Close output file
+    close(out_fd);
+
+    printf("Merging completed successfully. Output written to output.ro\n");
+
 }
 
 
