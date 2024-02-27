@@ -187,163 +187,275 @@ void print_symbols(state *s){
     }
 }
 
-void check_files_for_merge(state *s){
-    printf("Not implemented yet.\n");
-}
-
-void merge_ELF_files(state *s){
-    // Check if two ELF files are opened
-    if (s->mapped_fds[0] == -1 || s->mapped_fds[1] == -1) {
-        printf("Error: Two ELF files must be opened to perform merging\n");
-        return;
-    }
-
-    // Open output file for writing
-    int out_fd = open("output.ro", O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (out_fd == -1) {
-        perror("Error opening output file");
+void check_files_for_merge(state *s) {
+    // Check if two ELF files are opened and mapped
+    if (s->mapped_fds[0] == -1 || s->mapped_fds[1] == -1 || s->mapped_files[0] == NULL || s->mapped_files[1] == NULL) {
+        printf("Error: Two ELF files must be opened and mapped to perform merging\n");
         return;
     }
 
     // Initialize ELF header structures for both files
-    Elf32_Ehdr *header1 = (Elf32_Ehdr *)s->mapped_files[0];
-    Elf32_Ehdr *header2 = (Elf32_Ehdr *)s->mapped_files[1];
+    Elf32_Ehdr *header1 = (Elf32_Ehdr *) s->mapped_files[0];
+    Elf32_Ehdr *header2 = (Elf32_Ehdr *) s->mapped_files[1];
 
-    // Copy header from the first ELF file to the output file
-    if (write(out_fd, header1, sizeof(Elf32_Ehdr)) == -1) {
-        perror("Error writing ELF header");
-        close(out_fd);
-        return;
+//    // Check if both files contain exactly one symbol table
+//    if (header1->e_shnum != 2 || header2->e_shnum != 2) {
+//        printf("Error: Feature not supported - Each ELF file must contain exactly one symbol table\n");
+//        return;
+//    }
+
+    // Get symbol table section indices for both files
+    Elf32_Shdr *section_headers1 = (Elf32_Shdr *) (s->mapped_files[0] + header1->e_shoff);
+    Elf32_Shdr *section_headers2 = (Elf32_Shdr *) (s->mapped_files[1] + header2->e_shoff);
+
+    size_t symtab_idx1 = 0;
+    size_t symtab_idx2 = 0;
+
+    for (size_t i = 0; i < header1->e_shnum; i++) {
+        // Find symbol table section in the first file
+        if (section_headers1[i].sh_type == SHT_SYMTAB) {
+            symtab_idx1 = i;
+            break;
+        }
     }
 
-    // Merge section headers
-    Elf32_Shdr *section_headers1 = (Elf32_Shdr *)(s->mapped_files[0] + header1->e_shoff);
-    Elf32_Shdr *section_headers2 = (Elf32_Shdr *)(s->mapped_files[1] + header2->e_shoff);
-
-    size_t num_sections1 = header1->e_shnum;
-    size_t num_sections2 = header2->e_shnum;
-
-    // Calculate size of section headers for each file
-    size_t section_headers_size1 = num_sections1 * sizeof(Elf32_Shdr);
-    size_t section_headers_size2 = num_sections2 * sizeof(Elf32_Shdr);
-
-    // Write section headers from the first ELF file to the output file
-    if (write(out_fd, section_headers1, section_headers_size1) == -1) {
-        perror("Error writing section headers from file 1");
-        close(out_fd);
-        return;
+    for (size_t i = 0; i < header2->e_shnum; i++) {
+        // Find symbol table section in the second file
+        if (section_headers2[i].sh_type == SHT_SYMTAB) {
+            symtab_idx2 = i;
+            break;
+        }
     }
 
-    // Write section headers from the second ELF file to the output file
-    if (write(out_fd, section_headers2, section_headers_size2) == -1) {
-        perror("Error writing section headers from file 2");
-        close(out_fd);
-        return;
+    // Get symbol table headers
+    Elf32_Sym *symtab1 = (Elf32_Sym *) (s->mapped_files[0] + section_headers1[symtab_idx1].sh_offset);
+    Elf32_Sym *symtab2 = (Elf32_Sym *) (s->mapped_files[1] + section_headers2[symtab_idx2].sh_offset);
+
+    // Get string table for symbol names
+    char *strtab1 = (char *) (s->mapped_files[0] + section_headers1[section_headers1[symtab_idx1].sh_link].sh_offset);
+    char *strtab2 = (char *) (s->mapped_files[1] + section_headers2[section_headers2[symtab_idx2].sh_link].sh_offset);
+
+    // Loop through symbols in the first symbol table
+    for (size_t i = 1; i < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); i++) {
+        Elf32_Sym *symbol = &symtab1[i];
+        char *sym_name = strtab1 + symbol->st_name;
+
+        // Check if symbol is undefined (section index is SHN_UNDEF)
+        if (symbol->st_shndx == SHN_UNDEF) {
+            // Search for the symbol in the second symbol table
+            for (size_t j = 1; j < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); j++) {
+                Elf32_Sym *sym2 = &symtab2[j];
+                char *sym_name2 = strtab2 + sym2->st_name;
+
+                // If symbol is found in the second table and is defined, print error
+                if (strcmp(sym_name, sym_name2) == 0 && sym2->st_shndx != SHN_UNDEF) {
+                    printf("Symbol %s undefined\n", sym_name);
+                    break;
+                }
+            }
+        } else { // Symbol is defined
+            // Search for the symbol in the second symbol table
+            for (size_t j = 1; j < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); j++) {
+                Elf32_Sym *sym2 = &symtab2[j];
+                char *sym_name2 = strtab2 + sym2->st_name;
+
+                // If symbol is found in the second table and is also defined, print error
+                if (strcmp(sym_name, sym_name2) == 0 && sym2->st_shndx != SHN_UNDEF) {
+                    printf("Symbol %s multiply defined\n", sym_name);
+                    break;
+                }
+            }
+        }
     }
 
-    // Merge section contents (skipping symbol table sections)
-    for (size_t i = 0; i < num_sections1; i++) {
-        // Skip symbol table sections
-        if (section_headers1[i].sh_type == SHT_SYMTAB || section_headers1[i].sh_type == SHT_DYNSYM)
-            continue;
+    // Loop through symbols in the second symbol table
+    for (size_t i = 1; i < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); i++) {
+        Elf32_Sym *symbol = &symtab2[i];
+        char *sym_name = strtab2 + symbol->st_name;
 
-        // Write section contents from the first ELF file to the output file
-        if (write(out_fd, s->mapped_files[0] + section_headers1[i].sh_offset, section_headers1[i].sh_size) == -1) {
-            perror("Error writing section contents from file 1");
+        // Check if symbol is undefined (section index is SHN_UNDEF)
+        if (symbol->st_shndx == SHN_UNDEF) {
+            // Search for the symbol in the first symbol table
+            for (size_t j = 1; j < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); j++) {
+                Elf32_Sym *sym1 = &symtab1[j];
+                char *sym_name1 = strtab1 + sym1->st_name;
+
+                // If symbol is found in the first table and is defined, print error
+                if (strcmp(sym_name, sym_name1) == 0 && sym1->st_shndx != SHN_UNDEF) {
+                    printf("Symbol %s undefined\n", sym_name);
+                    break;
+                }
+            }
+        } else { // Symbol is defined
+            // Search for the symbol in the first symbol table
+            for (size_t j = 1; j < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); j++) {
+                Elf32_Sym *sym1 = &symtab1[j];
+                char *sym_name1 = strtab1 + sym1->st_name;
+
+                // If symbol is found in the first table and is also defined, print error
+                if (strcmp(sym_name, sym_name1) == 0 && sym1->st_shndx != SHN_UNDEF) {
+                    printf("Symbol %s multiply defined\n", sym_name);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+    void merge_ELF_files(state *s) {
+        // Check if two ELF files are opened
+        if (s->mapped_fds[0] == -1 || s->mapped_fds[1] == -1) {
+            printf("Error: Two ELF files must be opened to perform merging\n");
+            return;
+        }
+
+        // Open output file for writing
+        int out_fd = open("output.ro", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (out_fd == -1) {
+            perror("Error opening output file");
+            return;
+        }
+
+        // Initialize ELF header structures for both files
+        Elf32_Ehdr *header1 = (Elf32_Ehdr *) s->mapped_files[0];
+        Elf32_Ehdr *header2 = (Elf32_Ehdr *) s->mapped_files[1];
+
+        // Copy header from the first ELF file to the output file
+        if (write(out_fd, header1, sizeof(Elf32_Ehdr)) == -1) {
+            perror("Error writing ELF header");
             close(out_fd);
             return;
         }
-    }
 
-    for (size_t i = 0; i < num_sections2; i++) {
-        // Skip symbol table sections
-        if (section_headers2[i].sh_type == SHT_SYMTAB || section_headers2[i].sh_type == SHT_DYNSYM)
-            continue;
+        // Merge section headers
+        Elf32_Shdr *section_headers1 = (Elf32_Shdr *) (s->mapped_files[0] + header1->e_shoff);
+        Elf32_Shdr *section_headers2 = (Elf32_Shdr *) (s->mapped_files[1] + header2->e_shoff);
 
-        // Write section contents from the second ELF file to the output file
-        if (write(out_fd, s->mapped_files[1] + section_headers2[i].sh_offset, section_headers2[i].sh_size) == -1) {
-            perror("Error writing section contents from file 2");
+        size_t num_sections1 = header1->e_shnum;
+        size_t num_sections2 = header2->e_shnum;
+
+        // Calculate size of section headers for each file
+        size_t section_headers_size1 = num_sections1 * sizeof(Elf32_Shdr);
+        size_t section_headers_size2 = num_sections2 * sizeof(Elf32_Shdr);
+
+        // Write section headers from the first ELF file to the output file
+        if (write(out_fd, section_headers1, section_headers_size1) == -1) {
+            perror("Error writing section headers from file 1");
             close(out_fd);
             return;
         }
-    }
 
-    // Close output file
-    close(out_fd);
-
-    printf("Merging completed successfully. Output written to output.ro\n");
-
-}
-
-
-void quit(state *s) {
-    if (s->debug_mode) {
-        printf("Quitting\n");
-    }
-    for (int i = 0; i < 2; i++) {
-        if(s->mapped_fds[i] != -1){
-            munmap(s->mapped_files[i], s->mem_count);
-            close(s->mapped_fds[i]);
-            printf("File %d: Mapped file unmapped and closed.\n", i + 1);
-        }
-    }
-    printf("Exiting...\n");
-    exit(0);
-}
-
-
-int main() {
-    state s = {0}; // Initialize all members to 0
-    s.unit_size = 1;
-    s.mapped_fds[0] = -1; // Initialize file descriptors to -1
-    s.mapped_fds[1] = -1;
-
-    s.mapped_files[0] = NULL; // Initialize mapped memory locations to NULL
-    s.mapped_files[1] = NULL;
-    s.header = NULL;
-
-
-    void (*menu[MENU_SIZE])(state *s) = {
-            toggle_debug_mode,
-            examine_ELF_file,
-            print_section_names,
-            print_symbols,
-            check_files_for_merge,
-            merge_ELF_files,
-            quit
-    };
-
-    char *menu_names[MENU_SIZE] = {
-            "Toggle Debug Mode",
-            "Examine Elf File",
-            "Print Section Names",
-            "Print Symbols",
-            "Check Files For Merge",
-            "Merge ELF Files",
-            "Quit"
-    };
-
-    while (1) {
-        if (s.debug_mode) {
-            printf("Debug: unit_size = %d, file_name = '%s', mem_count = %zu\n", s.unit_size, s.file_name, s.mem_count);
+        // Write section headers from the second ELF file to the output file
+        if (write(out_fd, section_headers2, section_headers_size2) == -1) {
+            perror("Error writing section headers from file 2");
+            close(out_fd);
+            return;
         }
 
-        printf("\nChoose action:\n");
-        for (int i = 0; i < MENU_SIZE; i++) {
-            printf("%d-%s\n", i, menu_names[i]);
+        // Merge section contents (skipping symbol table sections)
+        for (size_t i = 0; i < num_sections1; i++) {
+            // Skip symbol table sections
+            if (section_headers1[i].sh_type == SHT_SYMTAB || section_headers1[i].sh_type == SHT_DYNSYM)
+                continue;
+
+            // Write section contents from the first ELF file to the output file
+            if (write(out_fd, s->mapped_files[0] + section_headers1[i].sh_offset, section_headers1[i].sh_size) == -1) {
+                perror("Error writing section contents from file 1");
+                close(out_fd);
+                return;
+            }
         }
 
-        int choice;
-        printf("\nEnter choice: ");
-        scanf("%d", &choice);
-        getchar(); // Consume newline
+        for (size_t i = 0; i < num_sections2; i++) {
+            // Skip symbol table sections
+            if (section_headers2[i].sh_type == SHT_SYMTAB || section_headers2[i].sh_type == SHT_DYNSYM)
+                continue;
 
-        if (choice >= 0 && choice < MENU_SIZE) {
-            menu[choice](&s);
-        } else {
-            printf("Invalid choice\n");
+            // Write section contents from the second ELF file to the output file
+            if (write(out_fd, s->mapped_files[1] + section_headers2[i].sh_offset, section_headers2[i].sh_size) == -1) {
+                perror("Error writing section contents from file 2");
+                close(out_fd);
+                return;
+            }
         }
+
+        // Close output file
+        close(out_fd);
+
+        printf("Merging completed successfully. Output written to output.ro\n");
+
     }
 
-    return 0;
-}
+
+    void quit(state *s) {
+        if (s->debug_mode) {
+            printf("Quitting\n");
+        }
+        for (int i = 0; i < 2; i++) {
+            if (s->mapped_fds[i] != -1) {
+                munmap(s->mapped_files[i], s->mem_count);
+                close(s->mapped_fds[i]);
+                printf("File %d: Mapped file unmapped and closed.\n", i + 1);
+            }
+        }
+        printf("Exiting...\n");
+        exit(0);
+    }
+
+
+    int main() {
+        state s = {0}; // Initialize all members to 0
+        s.unit_size = 1;
+        s.mapped_fds[0] = -1; // Initialize file descriptors to -1
+        s.mapped_fds[1] = -1;
+
+        s.mapped_files[0] = NULL; // Initialize mapped memory locations to NULL
+        s.mapped_files[1] = NULL;
+        s.header = NULL;
+
+
+        void (*menu[MENU_SIZE])(state *s) = {
+                toggle_debug_mode,
+                examine_ELF_file,
+                print_section_names,
+                print_symbols,
+                check_files_for_merge,
+                merge_ELF_files,
+                quit
+        };
+
+        char *menu_names[MENU_SIZE] = {
+                "Toggle Debug Mode",
+                "Examine Elf File",
+                "Print Section Names",
+                "Print Symbols",
+                "Check Files For Merge",
+                "Merge ELF Files",
+                "Quit"
+        };
+
+        while (1) {
+            if (s.debug_mode) {
+                printf("Debug: unit_size = %d, file_name = '%s', mem_count = %zu\n", s.unit_size, s.file_name,
+                       s.mem_count);
+            }
+
+            printf("\nChoose action:\n");
+            for (int i = 0; i < MENU_SIZE; i++) {
+                printf("%d-%s\n", i, menu_names[i]);
+            }
+
+            int choice;
+            printf("\nEnter choice: ");
+            scanf("%d", &choice);
+            getchar(); // Consume newline
+
+            if (choice >= 0 && choice < MENU_SIZE) {
+                menu[choice](&s);
+            } else {
+                printf("Invalid choice\n");
+            }
+        }
+
+        return 0;
+    }
