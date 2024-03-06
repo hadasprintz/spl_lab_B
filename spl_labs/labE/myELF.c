@@ -198,23 +198,18 @@ void check_files_for_merge(state *s) {
     Elf32_Ehdr *header1 = (Elf32_Ehdr *) s->mapped_files[0];
     Elf32_Ehdr *header2 = (Elf32_Ehdr *) s->mapped_files[1];
 
-//    // Check if both files contain exactly one symbol table
-//    if (header1->e_shnum != 2 || header2->e_shnum != 2) {
-//        printf("Error: Feature not supported - Each ELF file must contain exactly one symbol table\n");
-//        return;
-//    }
 
     // Get symbol table section indices for both files
     Elf32_Shdr *section_headers1 = (Elf32_Shdr *) (s->mapped_files[0] + header1->e_shoff);
     Elf32_Shdr *section_headers2 = (Elf32_Shdr *) (s->mapped_files[1] + header2->e_shoff);
 
-    size_t symtab_idx1 = 0;
-    size_t symtab_idx2 = 0;
+    Elf32_Sym *symbolTable1 = NULL;
+    Elf32_Sym *symbolTable2 = NULL;
 
     for (size_t i = 0; i < header1->e_shnum; i++) {
         // Find symbol table section in the first file
         if (section_headers1[i].sh_type == SHT_SYMTAB) {
-            symtab_idx1 = i;
+            symbolTable1 = (Elf32_Sym *) ((char *) s->mapped_files[0] + section_headers1[i].sh_offset);
             break;
         }
     }
@@ -222,85 +217,180 @@ void check_files_for_merge(state *s) {
     for (size_t i = 0; i < header2->e_shnum; i++) {
         // Find symbol table section in the second file
         if (section_headers2[i].sh_type == SHT_SYMTAB) {
-            symtab_idx2 = i;
+            symbolTable2 = (Elf32_Sym *) ((char *) s->mapped_files[1] + section_headers2[i].sh_offset);
             break;
         }
     }
 
-    // Get symbol table headers
-    Elf32_Sym *symtab1 = (Elf32_Sym *) (s->mapped_files[0] + section_headers1[symtab_idx1].sh_offset);
-    Elf32_Sym *symtab2 = (Elf32_Sym *) (s->mapped_files[1] + section_headers2[symtab_idx2].sh_offset);
+    if (symbolTable1 == NULL || symbolTable2 == NULL) {
+        printf("Error: Symbol table not found in both files.\n");
+        return;
+    }
 
-    // Get string table for symbol names
-    char *strtab1 = (char *) (s->mapped_files[0] + section_headers1[section_headers1[symtab_idx1].sh_link].sh_offset);
-    char *strtab2 = (char *) (s->mapped_files[1] + section_headers2[section_headers2[symtab_idx2].sh_link].sh_offset);
+    int symtab_idx1 = -1;
 
-    // Loop through symbols in the first symbol table
-    for (size_t i = 1; i < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); i++) {
-        Elf32_Sym *symbol = &symtab1[i];
-        char *sym_name = strtab1 + symbol->st_name;
-
-        // Check if symbol is undefined (section index is SHN_UNDEF)
-        if (symbol->st_shndx == SHN_UNDEF) {
-            // Search for the symbol in the second symbol table
-            for (size_t j = 1; j < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); j++) {
-                Elf32_Sym *sym2 = &symtab2[j];
-                char *sym_name2 = strtab2 + sym2->st_name;
-
-                // If symbol is found in the second table and is defined, print error
-                if (strcmp(sym_name, sym_name2) == 0 && sym2->st_shndx != SHN_UNDEF) {
-                    printf("Symbol %s undefined\n", sym_name);
-                    break;
-                }
-            }
-        } else { // Symbol is defined
-            // Search for the symbol in the second symbol table
-            for (size_t j = 1; j < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); j++) {
-                Elf32_Sym *sym2 = &symtab2[j];
-                char *sym_name2 = strtab2 + sym2->st_name;
-
-                // If symbol is found in the second table and is also defined, print error
-                if (strcmp(sym_name, sym_name2) == 0 && sym2->st_shndx != SHN_UNDEF) {
-                    printf("Symbol %s multiply defined\n", sym_name);
-                    break;
-                }
-            }
+// Find symbol table section in the first file
+    for (size_t i = 0; i < header1->e_shnum; i++) {
+        if (section_headers1[i].sh_type == SHT_SYMTAB) {
+            symtab_idx1 = section_headers1[i].sh_size;
+            break;
         }
     }
 
-    // Loop through symbols in the second symbol table
-    for (size_t i = 1; i < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); i++) {
-        Elf32_Sym *symbol = &symtab2[i];
-        char *sym_name = strtab2 + symbol->st_name;
+    if (symtab_idx1 == -1) {
+        printf("Error: Symbol table not found in the first file.\n");
+        return;
+    }
 
-        // Check if symbol is undefined (section index is SHN_UNDEF)
-        if (symbol->st_shndx == SHN_UNDEF) {
-            // Search for the symbol in the first symbol table
-            for (size_t j = 1; j < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); j++) {
-                Elf32_Sym *sym1 = &symtab1[j];
-                char *sym_name1 = strtab1 + sym1->st_name;
+    int numSymbols1 = section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym);
+    int symtab_idx2 = -1;
 
-                // If symbol is found in the first table and is defined, print error
-                if (strcmp(sym_name, sym_name1) == 0 && sym1->st_shndx != SHN_UNDEF) {
-                    printf("Symbol %s undefined\n", sym_name);
+// Find symbol table section in the first file
+    for (size_t i = 0; i < header2->e_shnum; i++) {
+        if (section_headers2[i].sh_type == SHT_SYMTAB) {
+            symtab_idx2 = section_headers1[i].sh_size;
+            break;
+        }
+    }
+
+    if (symtab_idx2 == -1) {
+        printf("Error: Symbol table not found in the first file.\n");
+        return;
+    }
+
+    printf("%d, %d", symtab_idx1, symtab_idx2);
+
+    int numSymbols2 = section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym);
+
+    printf("%d, %d", numSymbols1, numSymbols2);
+
+    for (int i = 1; i < numSymbols1; i++) {
+        if (symbolTable1[i].st_shndx == STN_UNDEF) {
+            //Symbol is undefined in the first file, check if it's also in the second file
+            int found = 0;
+            for (int j = 1; j < numSymbols2; j++) {
+                if (strcmp(((char *) s->mapped_files[0] + section_headers1[symbolTable1[i].st_shndx].sh_offset) +
+                           symbolTable1[i].st_name,
+                           ((char *) s->mapped_files[1] + section_headers2[symbolTable2[i].st_shndx].sh_offset) +
+                           symbolTable2[i].st_name) == 0) {
+                    found = 1;
                     break;
                 }
             }
-        } else { // Symbol is defined
-            // Search for the symbol in the first symbol table
-            for (size_t j = 1; j < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); j++) {
-                Elf32_Sym *sym1 = &symtab1[j];
-                char *sym_name1 = strtab1 + sym1->st_name;
-
-                // If symbol is found in the first table and is also defined, print error
-                if (strcmp(sym_name, sym_name1) == 0 && sym1->st_shndx != SHN_UNDEF) {
-                    printf("Symbol %s multiply defined\n", sym_name);
+            if (!found) {
+                printf("Symbol %s undefined\n",
+                       ((char *) s->mapped_files[0] + section_headers1[symbolTable1[i].st_shndx].sh_offset) +
+                       symbolTable1[i].st_name);
+            }
+        } else {
+            // Symbol is defined in the first file, check if it's also defined in the second file
+            for (int j = 1; j < numSymbols2; j++) {
+                if (strcmp(((char *) s->mapped_files[0] + section_headers1[symbolTable1[i].st_shndx].sh_offset) +
+                           symbolTable1[i].st_name,
+                           ((char *) s->mapped_files[1] + section_headers2[symbolTable2[i].st_shndx].sh_offset) +
+                           symbolTable2[i].st_name) == 0) {
+                    printf("Symbol %s multiply defined\n",
+                           ((char *) s->mapped_files[0] + section_headers1[symbolTable1[i].st_shndx].sh_offset) +
+                           symbolTable1[i].st_name);
                     break;
                 }
             }
         }
     }
 }
+
+//    //Check if two ELF files are opened and mapped
+//    if (s->mapped_fds[0] == -1 || s->mapped_fds[1] == -1 || s->mapped_files[0] == NULL || s->mapped_files[1] == NULL) {
+//        printf("Error: Two ELF files must be opened and mapped to perform merging\n");
+//        return;
+//    }
+//
+//    // Initialize ELF header structures for both files
+//    Elf32_Ehdr *header1 = (Elf32_Ehdr *) s->mapped_files[0];
+//    Elf32_Ehdr *header2 = (Elf32_Ehdr *) s->mapped_files[1];
+//
+//    //Get symbol table section indices for both files
+//    Elf32_Shdr *section_headers1 = (Elf32_Shdr *) (s->mapped_files[0] + header1->e_shoff);
+//    Elf32_Shdr *section_headers2 = (Elf32_Shdr *) (s->mapped_files[1] + header2->e_shoff);
+//
+//    int symtab_idx1 = 0;
+//    int symtab_idx2 = 1;
+//
+//    // Get symbol table headers
+//    Elf32_Sym *symtab1 = (Elf32_Sym *) (s->mapped_files[0] + section_headers1[symtab_idx1].sh_offset);
+//    Elf32_Sym *symtab2 = (Elf32_Sym *) (s->mapped_files[1] + section_headers2[symtab_idx2].sh_offset);
+//
+//    // Get string table for symbol names
+//    char *strtab1 = (char *) (s->mapped_files[0] + section_headers1[section_headers1[symtab_idx1].sh_link].sh_offset);
+//    char *strtab2 = (char *) (s->mapped_files[1] + section_headers2[section_headers2[symtab_idx2].sh_link].sh_offset);
+//
+//    // Loop through symbols in the first symbol table
+//    for (size_t i = 1; i < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); i++) {
+//        Elf32_Sym *symbol = &symtab1[i];
+//        char *sym_name = strtab1 + symbol->st_name;
+//
+//        // Check if symbol is undefined (section index is SHN_UNDEF)
+//        if (symbol->st_shndx == SHN_UNDEF) {
+//            // Search for the symbol in the second symbol table
+//            for (size_t j = 1; j < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); j++) {
+//                Elf32_Sym *sym2 = &symtab2[j];
+//                char *sym_name2 = strtab2 + sym2->st_name;
+//
+//                // If symbol is found in the second table and is defined, print error
+//                if (strcmp(sym_name, sym_name2) == 0 && sym2->st_shndx != SHN_UNDEF) {
+//                    printf("Symbol %s undefined\n", sym_name);
+//                    break;
+//                }
+//            }
+//        } else { // Symbol is defined
+//            // Search for the symbol in the second symbol table
+//            for (size_t j = 1; j < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); j++) {
+//                Elf32_Sym *sym2 = &symtab2[j];
+//                char *sym_name2 = strtab2 + sym2->st_name;
+//
+//                // If symbol is found in the second table and is also defined, print error
+//                if (strcmp(sym_name, sym_name2) == 0 && sym2->st_shndx != SHN_UNDEF) {
+//                    printf("Symbol %s multiply defined\n", sym_name);
+//                    break;
+//                }
+//            }
+//        }
+//    }
+//
+//    // Loop through symbols in the second symbol table
+//    for (size_t i = 1; i < section_headers2[symtab_idx2].sh_size / sizeof(Elf32_Sym); i++) {
+//        Elf32_Sym *symbol = &symtab2[i];
+//        char *sym_name = strtab2 + symbol->st_name;
+//
+//        // Check if symbol is undefined (section index is SHN_UNDEF)
+//        if (symbol->st_shndx == SHN_UNDEF) {
+//            // Search for the symbol in the first symbol table
+//            for (size_t j = 1; j < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); j++) {
+//                Elf32_Sym *sym1 = &symtab1[j];
+//                char *sym_name1 = strtab1 + sym1->st_name;
+//
+//                // If symbol is found in the first table and is defined, print error
+//                if (strcmp(sym_name, sym_name1) == 0 && sym1->st_shndx != SHN_UNDEF) {
+//                    printf("Symbol %s undefined\n", sym_name);
+//                    break;
+//                }
+//            }
+//        } else { // Symbol is defined
+//            // Search for the symbol in the first symbol table
+//            for (size_t j = 1; j < section_headers1[symtab_idx1].sh_size / sizeof(Elf32_Sym); j++) {
+//                Elf32_Sym *sym1 = &symtab1[j];
+//                char *sym_name1 = strtab1 + sym1->st_name;
+//
+//                // If symbol is found in the first table and is also defined, print error
+//                if (strcmp(sym_name, sym_name1) == 0 && sym1->st_shndx != SHN_UNDEF) {
+//                    printf("Symbol %s multiply defined\n", sym_name);
+//                    break;
+//                }
+//            }
+//        }
+//    }
+//}
+
 
     void merge_ELF_files(state *s) {
         // Check if two ELF files are opened
