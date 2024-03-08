@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
 
     // Call startup function to transfer control to the loaded program
     Elf32_Ehdr *elf_header = (Elf32_Ehdr *)map_start;
-    startup(argc - 1, argv + 1, (void *)(elf_header->e_entry));
+    startup(argc - 2, argv + 2, (void *)(elf_header->e_entry));
 
 
     close(fd);
