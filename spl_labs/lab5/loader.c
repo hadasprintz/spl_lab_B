@@ -20,9 +20,10 @@ void load_phdr(Elf32_Phdr *phdr, int fd);
 int startup(int argc, char **argv, void (*start)());
 
 int foreach_phdr(void *map_start, void (*func)(Elf32_Phdr *, int), int arg) {
-    Elf32_Ehdr *elf_header = (Elf32_Ehdr *)map_start;
-    Elf32_Phdr *phdr = (Elf32_Phdr *)((char *)map_start + elf_header->e_phoff);
-    int phnum = elf_header->e_phnum;
+    Elf32_Ehdr *header = (Elf32_Ehdr *)map_start;
+    // phdr = start + offset
+    Elf32_Phdr *phdr = (Elf32_Phdr *)((char *)map_start + header->e_phoff);
+    int phnum = header->e_phnum;
 
     for (int i = 0; i < phnum; ++i) {
         func(phdr + i, arg);
@@ -32,12 +33,36 @@ int foreach_phdr(void *map_start, void (*func)(Elf32_Phdr *, int), int arg) {
 }
 
 void process_phdr(Elf32_Phdr *phdr, int arg) {
+    const char* section_type_str = "UNKNOWN";
+    const char* prot_flags_str = "";
+    if (phdr->p_type == PT_PHDR){
+        section_type_str = "PHDR";
+    }
+    else if(phdr->p_type == PT_INTERP){
+        section_type_str = "INTERP";
+    }
+    else if(phdr->p_type == PT_LOAD){
+        section_type_str = "LOAD";
+    }
+    else if(phdr->p_type == PT_DYNAMIC){
+        section_type_str = "DYNAMIC";
+    }
+    else if(phdr->p_type == PT_NOTE){
+        section_type_str = "NOTE";
+    }
+
+    if(phdr->p_flags & PF_R){
+        prot_flags_str = "PROT_READ";
+    }
+    else if(phdr->p_flags & PF_W){
+        prot_flags_str = "PROT_WRITE";
+    }
+    else if(phdr->p_flags & PF_X){
+        prot_flags_str = "PROT_EXEC";
+    }
+
     printf("%-6s 0x%06x 0x%08x 0x%08x 0x%05x 0x%05x %-2s%-2s 0x%x\n",
-           (phdr->p_type == PT_PHDR) ? "PHDR" :
-           (phdr->p_type == PT_INTERP) ? "INTERP" :
-           (phdr->p_type == PT_LOAD) ? "LOAD" :
-           (phdr->p_type == PT_DYNAMIC) ? "DYNAMIC" :
-           (phdr->p_type == PT_NOTE) ? "NOTE" : "UNKNOWN",
+           section_type_str,
            phdr->p_offset,
            phdr->p_vaddr,
            phdr->p_paddr,
@@ -47,10 +72,7 @@ void process_phdr(Elf32_Phdr *phdr, int arg) {
            (phdr->p_flags & PF_W) ? "W" : " ",
            phdr->p_align);
     // Print protection flags
-    printf("%s%s%s",
-           (phdr->p_flags & PF_R) ? "PROT_READ " : "",
-           (phdr->p_flags & PF_W) ? "PROT_WRITE " : "",
-           (phdr->p_flags & PF_X) ? "PROT_EXEC " : "");
+    printf("%s", prot_flags_str);
 
     // Print mapping flags
     printf("%s%s\n",
@@ -71,7 +93,7 @@ void load_phdr(Elf32_Phdr *phdr, int fd) {
     // Calculate the aligned file offset
     off_t offset = phdr->p_offset & 0xFFFFF000;
 
-    // Calculate the padding (difference between actual and aligned virtual address)
+    // Calculate the padding
     size_t padding = phdr->p_vaddr & 0xfff;
 
     // Map the program header into memory
@@ -108,12 +130,12 @@ int main(int argc, char *argv[]) {
         close(fd);
         return EXIT_FAILURE;
     }
-
+    printf("Type Offset VirtAddr PhysAddr FileSiz MemSiz Flg Align\n");
     foreach_phdr(map_start, load_phdr, fd);
 
     // Call startup function to transfer control to the loaded program
     Elf32_Ehdr *elf_header = (Elf32_Ehdr *)map_start;
-    startup(argc - 2, argv + 2, (void *)(elf_header->e_entry));
+    startup(argc - 1, argv + 1, (void *)(elf_header->e_entry));
 
 
     close(fd);
